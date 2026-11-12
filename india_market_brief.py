@@ -22,6 +22,12 @@ SECTORS = {
 }
 SECTOR_OF = {t: sec for sec, ts in SECTORS.items() for t in ts.split()}
 UNIVERSE = list(SECTOR_OF)
+try:
+    import json
+    _u = json.load(open("universe.json"))["stocks"]
+    UNIVERSE = list(_u); SECTOR_OF.update(_u)
+except Exception:
+    pass
 INDICES = {"NIFTY 50": "^NSEI", "NIFTY BANK": "^NSEBANK", "INDIA VIX": "^INDIAVIX"}
 SIGNALS = {"breakout": "Breakout (20d high + volume)",
            "bounce": "Oversold bounce (RSI under 35)",
