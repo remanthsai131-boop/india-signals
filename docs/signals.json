@@ -14,9 +14,7 @@
   "hit": "42% of 19",
   "sector": "Financial Services",
   "date": "2026-11-13",
-  "up5": 7.89,
-  "close5": 4.45,
-  "dn5": 5.87
+  "skip_above": 352.49
  },
  {
   "t": "BANKINDIA",
@@ -33,9 +31,7 @@
   "hit": "19% of 16",
   "sector": "Financial Services",
   "date": "2026-11-13",
-  "up5": 3.64,
-  "close5": 1.62,
-  "dn5": 2.63
+  "skip_above": 155.64
  },
  {
   "t": "HONASA",
@@ -52,9 +48,7 @@
   "hit": "25% of 12",
   "sector": "Fast Moving Consumer Goods",
   "date": "2026-11-13",
-  "up5": 6.29,
-  "close5": 3.25,
-  "dn5": 3.04
+  "skip_above": 506.97
  },
  {
   "t": "LICHSGFIN",
@@ -71,9 +65,7 @@
   "hit": "0% of 6",
   "sector": "Financial Services",
   "date": "2026-11-13",
-  "up5": 1.62,
-  "close5": 0.61,
-  "dn5": 1.42
+  "skip_above": 590.95
  },
  {
   "t": "HCLTECH",
@@ -90,9 +82,7 @@
   "hit": "15% of 39",
   "sector": "Information Technology",
   "date": "2026-11-13",
-  "up5": 1.62,
-  "close5": 0.81,
-  "dn5": 1.82
+  "skip_above": 1391.78
  },
  {
   "t": "TECHM",
@@ -109,9 +99,7 @@
   "hit": "21% of 42",
   "sector": "Information Technology",
   "date": "2026-11-13",
-  "up5": 1.82,
-  "close5": 0.81,
-  "dn5": 2.02
+  "skip_above": 1781.64
  },
  {
   "t": "GESHIP",
@@ -128,9 +116,7 @@
   "hit": "-",
   "sector": "Services",
   "date": "2026-11-13",
-  "up5": 4.45,
-  "close5": 1.82,
-  "dn5": 2.83
+  "skip_above": 1533.18
  },
  {
   "t": "LEMONTREE",
@@ -147,9 +133,7 @@
   "hit": "-",
   "sector": "Consumer Services",
   "date": "2026-11-13",
-  "up5": 4.66,
-  "close5": 2.63,
-  "dn5": 3.04
+  "skip_above": 124.76
  },
  {
   "t": "FEDERALBNK",
@@ -166,9 +150,7 @@
   "hit": "-",
   "sector": "Financial Services",
   "date": "2026-11-13",
-  "up5": 1.82,
-  "close5": 0.81,
-  "dn5": 1.21
+  "skip_above": 369.78
  },
  {
   "t": "BHARTIHEXA",
@@ -185,9 +167,7 @@
   "hit": "-",
   "sector": "Telecommunication",
   "date": "2026-11-13",
-  "up5": 6.28,
-  "close5": 2.43,
-  "dn5": 1.62
+  "skip_above": 1682.15
  },
  {
   "t": "INFY",
@@ -204,9 +184,7 @@
   "hit": "-",
   "sector": "Information Technology",
   "date": "2026-11-13",
-  "up5": 1.82,
-  "close5": 0.81,
-  "dn5": 2.23
+  "skip_above": 1152.91
  },
  {
   "t": "WIPRO",
@@ -223,9 +201,7 @@
   "hit": "-",
   "sector": "Information Technology",
   "date": "2026-11-13",
-  "up5": 1.01,
-  "close5": 0.61,
-  "dn5": 2.02
+  "skip_above": 196.55
  },
  {
   "t": "GABRIEL",
@@ -242,9 +218,7 @@
   "hit": "-",
   "sector": "Automobile and Auto Components",
   "date": "2026-11-13",
-  "up5": 13.77,
-  "close5": 7.29,
-  "dn5": 6.48
+  "skip_above": 1568.23
  },
  {
   "t": "BBOX",
@@ -261,9 +235,7 @@
   "hit": "-",
   "sector": "Information Technology",
   "date": "2026-11-13",
-  "up5": 10.53,
-  "close5": 5.47,
-  "dn5": 5.87
+  "skip_above": 909.71
  },
  {
   "t": "LGEINDIA",
@@ -280,9 +252,7 @@
   "hit": "-",
   "sector": "Consumer Durables",
   "date": "2026-11-13",
-  "up5": 3.0,
-  "close5": 1.12,
-  "dn5": 1.87
+  "skip_above": 1762.85
  },
  {
   "t": "ANURAS",
@@ -299,9 +269,7 @@
   "hit": "15% of 13",
   "sector": "Chemicals",
   "date": "2026-11-13",
-  "up5": 3.24,
-  "close5": 1.62,
-  "dn5": 3.04
+  "skip_above": 1313.61
  },
  {
   "t": "PNB",
@@ -318,9 +286,7 @@
   "hit": "-",
   "sector": "Financial Services",
   "date": "2026-11-13",
-  "up5": 1.62,
-  "close5": 0.4,
-  "dn5": 2.02
+  "skip_above": 145.38
  },
  {
   "t": "UNOMINDA",
@@ -337,9 +303,7 @@
   "hit": "-",
   "sector": "Automobile and Auto Components",
   "date": "2026-11-13",
-  "up5": 3.44,
-  "close5": 2.02,
-  "dn5": 3.85
+  "skip_above": 1421.99
  },
  {
   "t": "CDSL",
@@ -356,9 +320,7 @@
   "hit": "-",
   "sector": "Financial Services",
   "date": "2026-11-13",
-  "up5": 3.85,
-  "close5": 2.43,
-  "dn5": 3.04
+  "skip_above": 1477.09
  },
  {
   "t": "MEESHO",
@@ -375,8 +337,6 @@
   "hit": "-",
   "sector": "Consumer Services",
   "date": "2026-11-13",
-  "up5": 12.72,
-  "close5": 7.02,
-  "dn5": 8.33
+  "skip_above": 261.85
  }
 ]
