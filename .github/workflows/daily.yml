@@ -15,7 +15,7 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -r requirements.txt
-      - run: python india_market_brief.py
+      - run: python india_tm.py
       - run: |
           git config user.name "signals-bot"
           git config user.email "bot@users.noreply.github.com"
