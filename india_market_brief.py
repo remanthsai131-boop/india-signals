@@ -5,8 +5,8 @@ import numpy as np, pandas as pd, requests, yfinance as yf
 
 CAPITAL = 100000      # your trading capital (Rs)
 RISK_PCT = 1.0        # max loss per trade, % of capital
-MAX_PRICE = 1300      # only stocks priced at or below this
-MIN_PRICE = 50        # skip penny stocks
+MAX_PRICE = 2000      # only stocks priced at or below this
+MIN_PRICE = 100        # skip penny stocks
 MAX_SETUPS = 20       # how many ranked setups to show (aim 10-20)
 MAX_POS_PCT = 25      # one position never more than this % of capital
 SECTORS = {
