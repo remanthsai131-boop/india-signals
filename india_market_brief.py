@@ -7,8 +7,8 @@ CAPITAL = 100000      # your trading capital (Rs)
 RISK_PCT = 1.0        # max loss per trade, % of capital
 MAX_PRICE = 2000      # only stocks priced at or below this
 MIN_PRICE = 100        # skip penny stocks
-MAX_SETUPS = 20       # how many ranked setups to show (aim 10-20)
-MAX_POS_PCT = 25      # one position never more than this % of capital
+MAX_SETUPS = 30       # how many ranked setups to show (aim 10-20)
+MAX_POS_PCT = 30      # one position never more than this % of capital
 SECTORS = {
  "Banks & Finance": "SBIN BANKBARODA PNB CANBK UNIONBANK IDFCFIRSTB FEDERALBNK INDUSINDBK BANDHANBNK AUBANK HDFCBANK ICICIBANK AXISBANK KOTAKBANK RECLTD PFC IRFC",
  "Energy & Power": "ONGC NTPC POWERGRID COALINDIA BPCL IOC GAIL TATAPOWER NHPC ADANIPOWER SUZLON OIL PETRONET",
