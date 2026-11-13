@@ -1,0 +1,8 @@
+signal_date,symbol,setup,entry,stop,target,qty,status,fill,exit,exit_date,pnl,r
+2026-11-13,ANGELONE,Breakout (20d high + volume),349.0,331.59,372.21,57,open,,,,,
+2026-11-13,BANKINDIA,Breakout (20d high + volume),154.1,147.17,163.34,144,open,,,,,
+2026-11-13,HONASA,Breakout (20d high + volume),501.95,474.15,539.02,35,open,,,,,
+2026-11-13,LICHSGFIN,Breakout (20d high + volume),585.1,558.77,620.21,37,open,,,,,
+2026-11-13,HCLTECH,Trend pullback (to 20 EMA),1378.0,1320.75,1454.33,17,open,,,,,
+2026-11-13,TECHM,Trend pullback (to 20 EMA),1764.0,1696.51,1853.99,14,open,,,,,
+2026-11-13,ANURAS,Breakout (20d high + volume),1300.6,1246.96,1372.11,18,open,,,,,
