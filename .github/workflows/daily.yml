@@ -19,10 +19,11 @@ jobs:
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      - run: python pro_engine.py
       - run: |
           git config user.name "signals-bot"
           git config user.email "bot@users.noreply.github.com"
-          git add docs/index.html docs/signals.json journal/paper_trades.csv
+          git add docs/index.html docs/signals.json docs/pro.html docs/pro.json journal/paper_trades.csv
           git commit -m "update signals" || echo "no changes"
           git pull --rebase
           git push
