@@ -6,3 +6,4 @@ signal_date,symbol,setup,entry,stop,target,qty,status,fill,exit,exit_date,pnl,r
 2026-11-13,HCLTECH,Trend pullback (to 20 EMA),1378.0,1320.75,1454.33,17,open,,,,,
 2026-11-13,TECHM,Trend pullback (to 20 EMA),1764.0,1696.51,1853.99,14,open,,,,,
 2026-11-13,ANURAS,Breakout (20d high + volume),1300.6,1246.96,1372.11,18,open,,,,,
+2026-11-12,PRESTIGE,Breakout (20d high + volume),1693.9,1606.87,1809.94,11,open,,,,,
