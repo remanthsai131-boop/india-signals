@@ -21,10 +21,11 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       - run: python pro_engine.py
       - run: python compare.py
+      - run: python home.py
       - run: |
           git config user.name "signals-bot"
           git config user.email "bot@users.noreply.github.com"
-          git add docs/index.html docs/signals.json docs/pro.html docs/pro.json journal/paper_trades.csv
+          git add -A docs journal
           git commit -m "update signals" || echo "no changes"
           git pull --rebase
           git push
