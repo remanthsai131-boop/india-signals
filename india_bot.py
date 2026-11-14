@@ -100,12 +100,13 @@ def plan_section(top, lv):
         "Breakout-trigger ideas: place a buy only if price crosses the trigger. No cross, no trade.",
         "Put the stop in as soon as you are filled. Exit on day 5 if neither stop nor target was hit.",
         "If Nifty opens more than 1% from yesterday's close, wait 30 minutes before any entry."))
+    focus = [p["t"] for p in ideas if p["tm"][0] >= p["tm"][1]][:3]
     rows = ""
     for i, p in enumerate(ideas, 1):
         brk = p["cat"].startswith("Near breakout"); cap = p["entry"] * 1.01
         zone = f"cross {p['entry']:,.1f}, up to {cap:,.1f}" if brk else f"open, if at or below {cap:,.1f}"
         risk = p["qty"] * (p["entry"] - p["stop"])
-        rows += (f'<tr><td>{"&#9733; " if i <= 3 else ""}{i}. {html.escape(p["t"])}</td><td>{html.escape(p["cat"])}</td><td>{zone}</td>'
+        rows += (f'<tr><td>{"&#9733; " if p["t"] in focus else ""}{i}. {html.escape(p["t"])}</td><td>{html.escape(p["cat"])}</td><td>{zone}</td>'
                  f'<td>{p["stop"]:,.1f}</td><td>{p["tgt"]:,.1f}</td><td>{p["qty"]}</td><td>{risk:,.0f}</td>'
                  f'<td class="up">{p["tm"][0]:.0f}%</td><td class="dn">{p["tm"][1]:.0f}%</td><td>{p["hit"]}</td></tr>')
     rows = rows or '<tr><td colspan=10>No ideas for tomorrow. Doing nothing is a valid plan.</td></tr>'
@@ -114,7 +115,7 @@ def plan_section(top, lv):
             f'<div class=warn>{"<br>".join(flags)}</div><h2>Nifty levels</h2>'
             '<p class=n>Classic pivot levels from the last session. Price often reacts near them. They are not predictions.</p>'
             f'<div class=grid3>{tiles}</div><h2>Rules for the day</h2><ol class=n>{rules}</ol>'
-            '<h2>Trade ideas (first 3 are the focus)</h2>'
+            '<h2>Trade ideas</h2><p class=n>&#9733; marks up to 3 ideas whose simulated target chance is at least equal to their stop chance. No star means the odds look weak, so skipping is fine.</p>'
             '<div class=tw><table><tr><th>Stock<th>Setup<th>Buy zone<th>Stop<th>Target<th>Qty<th>Risk Rs<th>Sim target<th>Sim stop<th>Real past hit</tr>'
             f'{rows}</table></div>')
 
@@ -139,7 +140,7 @@ def main():
     json.dump(rows, open("docs/signals.json", "w"), indent=1)
     day = next_day(lv["date"]); done = j[j.status.isin(["target", "stop", "expired"])]
     msg = (f"Plan for {day:%a %d %b}. Nifty close {lv['C']:,.0f} | S1 {lv['S1']:,.0f} | R1 {lv['R1']:,.0f}\n"
-           + "\n".join(f"{i}. {p['t']}: " + (f"buy only if it crosses {p['entry']:.1f}" if p["cat"].startswith("Near breakout") else f"buy near open, skip if above {p['entry']*1.01:.1f}")
+           + "\n".join(f"{i}. {'* ' if p['tm'][0] >= p['tm'][1] else ''}{p['t']}: " + (f"buy only if it crosses {p['entry']:.1f}" if p["cat"].startswith("Near breakout") else f"buy near open, skip if above {p['entry']*1.01:.1f}")
                        + f" | stop {p['stop']:.1f} | target {p['tgt']:.1f} | qty {p['qty']}" for i, p in enumerate(ideas_of(top)[:5], 1))
            + (f"\nPaper record: {len(done)} closed, win {100*(done.pnl.astype(float) > 0).mean():.0f}%" if len(done) else "\nPaper record: no closed trades yet")
            + "\nMax 3 trades. Wait until 9:30. Research only, not advice.")
