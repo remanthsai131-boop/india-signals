@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Strategy scoreboard: swing signals vs holding Nifty vs holding the whole list vs monthly momentum picks.
 Adds a section to docs/pro.html. Research only, not financial advice. No orders are placed."""
-import html, os
+import html, json, os
 import numpy as np, pandas as pd
 import india_market_brief as m
 import pro_engine as pe
@@ -86,6 +86,8 @@ def main():
     chart2 = m.line_chart([("Swing signals (max 3 open)", sw, "c1"), ("Nifty", series["Nifty buy and hold"], "c2")], fmt="{:.0f}")
     lastmom = (closes.iloc[-1 - SKIP] / closes.iloc[-1 - LOOK] - 1).dropna().sort_values(ascending=False).head(TOP)
     on = bool(nc.iloc[-1] > n200.iloc[-1]); amt = m.CAPITAL / TOP
+    json.dump(dict(date=str(idx[-1].date()), on=on, nifty=float(nc.iloc[-1]), rsi=float(nifty.rsi.iloc[-1]), trend=pe.TREND[int(nifty.trend.iloc[-1])],
+                   picks=[dict(sym=t, price=float(closes[t].iloc[-1]), mom=float(v)) for t, v in lastmom.items()]), open("docs/momentum.json", "w"))
     prow = "".join(f'<tr><td>{html.escape(t)}</td><td>{closes[t].iloc[-1]:,.1f}</td><td>{v*100:+.0f}%</td><td>{int(amt // closes[t].iloc[-1])}</td></tr>' for t, v in lastmom.items())
     sec = ('<h2>Strategy scoreboard: which approach actually did best?</h2>'
            '<p class=n>Same stocks, same last year, costs included. The list was chosen from recent strength, so "hold the list" and momentum look better than real life. '
@@ -103,4 +105,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
