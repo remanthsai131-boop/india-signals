@@ -8,7 +8,7 @@ import india_market_brief as m
 CAPITAL, RISK_PCT = m.CAPITAL, m.RISK_PCT
 HOLD_DAYS = 20          # swing trade: up to about 1 month
 COST_PCT = 0.30         # round-trip cost estimate in % (brokerage, taxes, slippage)
-TOP_N = 30
+TOP_N = 40
 MIN_Q = 50              # minimum quality score to appear in the list
 MAX_POS_PCT = 20        # one swing position max % of capital
 TREND = {2: "Strong up", 1: "Up", 0: "Sideways", -1: "Down", -2: "Strong down"}
@@ -50,25 +50,42 @@ def signals(df):
     df["sell"] = ((df.trend <= -1) & (c < df.e20)) | ((c < df.ll20) & (v >= 1.3 * df.vavg) & (df.trend <= 0))
     return df
 
-def backtest(df, sig, days=250):
-    """Same rules on the last year: fill next open, stop first on ties, target = 2R, max HOLD_DAYS, costs included."""
+def backtest(df, sig, days=250, k=2.0, H=HOLD_DAYS, trail=False, a=None, b=None):
+    """Replay the rules: fill next open, stop first on ties, target = k*R (or trail below EMA20), max H days, costs included."""
     res, last = [], -1
-    hi, lo, op, cl = df.High.values, df.Low.values, df.Open.values, df.Close.values
+    a = len(df) - days if a is None else a; b = len(df) if b is None else b
+    hi, lo, op, cl, e20 = df.High.values, df.Low.values, df.Open.values, df.Close.values, df.e20.values
     for i in np.where(sig.values)[0]:
-        if i < len(df) - days or i <= last or i + 1 >= len(df): continue
+        if i < a or i >= b or i <= last or i + 1 >= len(df): continue
         e, s = float(df.entry.iloc[i]), float(df.stop.iloc[i]); R = e - s
         if R <= 0 or np.isnan(R): continue
-        t1 = e + 2 * R; fill = op[i + 1]
-        if fill <= s or fill >= t1: continue
+        t1 = e + k * R; fill = op[i + 1]
+        if fill <= s or (not trail and fill >= t1): continue
         out = None
-        for j in range(i + 1, min(i + 1 + HOLD_DAYS, len(df))):
+        for j in range(i + 1, min(i + 1 + H, len(df))):
             if lo[j] <= s: out = ("stop", min(s, op[j]) if j > i + 1 else s, j); break
-            if hi[j] >= t1: out = ("target", t1, j); break
+            if trail:
+                if j > i + 1 and cl[j] < e20[j]: out = ("trail", cl[j], j); break
+            elif hi[j] >= t1: out = ("target", t1, j); break
         if out is None:
-            if i + HOLD_DAYS >= len(df): continue
-            out = ("expired", cl[i + HOLD_DAYS], i + HOLD_DAYS)
+            if i + H >= len(df): continue
+            out = ("expired", cl[i + H], i + H)
         res.append((df.index[i], out[0], (out[1] - fill) / R - COST_PCT / 100 * fill / R)); last = out[2]
     return res
+
+VARIANTS = [("Fixed target 1.5R, hold 10 days", dict(k=1.5, H=10)), ("Fixed target 2R, hold 20 days", dict(k=2.0, H=20)),
+            ("Fixed target 3R, hold 20 days", dict(k=3.0, H=20)), ("Trailing exit (close below 20-day average), up to 40 days", dict(H=40, trail=True))]
+
+def study(data):
+    """Walk-forward check: pick the best exit style on the first half of the year, then report it on the second half."""
+    N = 250; mid = N // 2; out = []
+    for name, kw in VARIANTS:
+        h1, h2 = [], []
+        for df in data.values():
+            L = len(df); sg = df.pull | df.brk
+            h1 += backtest(df, sg, a=L - N, b=L - mid, **kw); h2 += backtest(df, sg, a=L - mid, b=L, **kw)
+        out.append((name, stats(h1), stats(h2)))
+    return out
 
 def stats(res):
     if not res: return dict(n=0, win=0, avg=0, pf=0, dd=0)
@@ -174,7 +191,12 @@ def main():
     cands.sort(key=lambda p: (not p["in_zone"], -p["q"])); top = cands[:TOP_N]
     pooled = allres["Pullback"] + allres["Breakout"]; ps = stats(pooled)
     order = sorted(pooled, key=lambda x: x[0]); cum = np.cumsum([x[2] for x in order]) if order else np.array([0.0])
-    lead = leaders(data, nifty, sec)
+    lead = leaders(data, nifty, sec); sv = study(data)
+    pick = max((v for v in sv if v[1]["n"] >= 20), key=lambda v: v[1]["avg"], default=None)
+    cell = lambda t: f'{t["n"]} / {t["avg"]:+.2f}R / PF {t["pf"]:.1f}'
+    srows = "".join(f'<tr><td>{n}{" (chosen on first half)" if pick and n == pick[0] else ""}</td><td>{cell(a1)}</td><td>{cell(a2)}</td></tr>' for n, a1, a2 in sv)
+    edge = bool(pick and pick[1]["avg"] > 0 and pick[2]["avg"] > 0)
+    study_msg = ("The chosen exit style was profitable in both halves. That is encouraging but still needs paper trading to confirm." if edge else "No exit style was profitable in both halves of the year. That means the rules show no proven edge yet, so stay on paper trading and do not risk real money.")
 
     adv = sum(int(d.iloc[-1].trend) >= 1 for d in data.values()); N = max(len(data), 1)
     verdict = ("New BUY signals are paused: Nifty is in a downtrend." if block else
@@ -197,7 +219,7 @@ def main():
     for i, p in enumerate(top, 1):
         s = p["st"]; rec = f'{s["n"]} / {s["win"]:.0f}% / {s["avg"]:+.2f}R' if s["n"] >= 3 else f'{s["n"]} (too few)'
         rows += (f'<tr><td>{i}. {html.escape(p["t"])}</td><td>{p["trend"]}</td><td>{p["kind"]}</td><td class="t{p["tier"]}">{p["q"]} ({p["tier"]})</td><td>{p["price"]:,.1f}</td>'
-                 f'<td>{p["lo"]:,.1f} - {p["hi"]:,.1f}</td><td>{p["stop"]:,.1f}</td><td>{p["t1"]:,.1f}</td><td>{p["t2"]:,.1f}</td><td>{p["risk_pct"]:.1f}%</td>'
+                 f'<td>{p["lo"]:,.1f} - {p["hi"]:,.1f}</td><td>{p["stop"]:,.1f}</td><td>{p["t1"]:,.1f} - {p["t2"]:,.1f}</td><td>{p["risk_pct"]:.1f}%</td>'
                  f'<td>{p["qty"]}</td><td>{p["cost"]:,.0f}</td><td>{rec}</td><td>{html.escape(p["status"])}</td></tr>')
     rows = rows or '<tr><td colspan=14>No trades pass the filters today. Doing nothing is a valid position.</td></tr>'
     srow = "".join(f'<tr><td>{html.escape(t)}</td><td>{TREND[int(x.trend)]}</td><td>{x.Close:,.1f}</td><td>{"below 20d low on volume" if x.Close < x.ll20 else "downtrend, below EMA20"}</td><td>{x.e20:,.1f}</td></tr>'
@@ -221,11 +243,11 @@ def main():
 <div class=warn>{verdict}</div><div class=grid3>{tiles}</div>
 <h2>Swing trades: top {len(top)} for {day:%a %d %b %Y}</h2>
 <p class=n>Hold up to about 1 month. In-zone trades first, then ones approaching the zone. Buy zone is set from the 20 and 50 day averages (pullbacks) or the 20-day high (breakouts). Stop sits below the recent swing low with an ATR buffer. T1 = 2R, T2 = 3R, where R is your stop distance. Tier A is 75+, B is 60-74, C is watch only. If fewer than {TOP_N} pass the filters, that is by design, since padding the list with weak trades would hurt.</p>
-<div class=tw><table class=s><tr><th>Stock<th>Trend<th>Signal<th>Quality<th>Price<th>Buy zone<th>Stop<th>T1 (2R)<th>T2 (3R)<th>Risk %<th>Qty<th>Cost Rs<th>1y record: trades / win / avg R<th>Status</tr>{rows}</table></div>
+<div class=tw><table class=s><tr><th>Stock<th>Trend<th>Signal<th>Quality<th>Price<th>Buy range<th>Stop (exit below)<th>Sell range (T1 - T2)<th>Risk %<th>Qty<th>Cost Rs<th>1y record: trades / win / avg R<th>Status</tr>{rows}</table></div>
 <h2>How the same rules did over the last year</h2><p class=n>Every signal the rules would have given in the last 250 trading days, filled at the next open, stop first on ties, exit at T1 (2R) or after {HOLD_DAYS} days, with {COST_PCT}% costs. The stock list was chosen from recent strength, so this looks better than live results are likely to be.</p>
 <div class=dgrid>{d1}{d2}</div>
 <div class=tw><table class=s><tr><th>Signal<th>Trades<th>Win rate<th>Avg R<th>Profit factor<th>Max drawdown</tr>{byk}</table></div>{eq}
-<h2>SELL / avoid list</h2><p class=n>Stocks in a downtrend or breaking down on volume. If you hold one, consider exiting or trailing your stop. In India, short selling for delivery is not allowed; shorting is only intraday or in F&amp;O, which carries high risk.</p>
+<h2>Which exit style worked best? (walk-forward test)</h2><p class=n>Each exit style was tested on the first half of the last year, then on the second half. A style that wins in both halves is more believable than one that only looks good on the period it was tuned on. Columns show trades / average R / profit factor.</p><div class=tw><table class=s><tr><th>Exit style<th>First half<th>Second half</tr>{srows}</table></div><p>{study_msg}</p><h2>SELL / avoid list</h2><p class=n>Stocks in a downtrend or breaking down on volume. If you hold one, consider exiting or trailing your stop. In India, short selling for delivery is not allowed; shorting is only intraday or in F&amp;O, which carries high risk.</p>
 <div class=tw><table class=s><tr><th>Stock<th>Trend<th>Price<th>Reason<th>EMA20</tr>{srow}</table></div>
 <h2>Long-term leaders (multibagger watch)</h2><p class=n>Stocks in long-term uptrends (above the 200-day average, near 52-week highs, strongest 12-month and 6-month moves). Nobody can pick multibaggers in advance, so this is a shortlist to research, not a promise. Fundamentals (ROE / revenue growth / debt-to-equity) show only if Yahoo provides them. Plan: buy in three parts (now, on a dip to the 50-day, near the 200-day), and review if it closes below the 200-day. Only from your scanned list.</p>
 <div class=tw><table class=s><tr><th>Stock<th>Sector<th>Price<th>12m return<th>vs Nifty (6m)<th>Below 52w high<th>ROE / Rev growth / D/E<th>EMA50<th>EMA200 (distance)</tr>{lrow}</table></div>
@@ -242,4 +264,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
