@@ -6,8 +6,8 @@ import numpy as np, pandas as pd, requests, yfinance as yf
 MAX_PRICE = 2000        # same limits as india_market_brief.py
 MIN_PRICE = 100
 MIN_TURNOVER = 1e8      # avg daily traded value in Rs (about 10 crore) - keeps only liquid stocks
-N_MOMENTUM = 60         # strongest names by momentum, nearness to 3-month high, volume surge
-N_LIQUID = 20           # plus the most liquid names for stability
+N_MOMENTUM = 150         # strongest names by momentum, nearness to 3-month high, volume surge
+N_LIQUID = 50           # plus the most liquid names for stability
 URLS = ["https://nsearchives.nseindia.com/content/indices/ind_nifty500list.csv",
         "https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv"]
 
