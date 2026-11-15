@@ -1,0 +1,4 @@
+signal_date,symbol,kind,entry,stop,target,qty,status,fill,exit,exit_date,r,pnl
+2026-11-13,CHENNPETRO,Pullback,1428.2,1354.37,1575.87,13,open,,,,,
+2026-11-13,CYIENT,Pullback,1104.9,1058.67,1197.37,18,open,,,,,
+2026-11-13,HBLENGINE,Pullback,799.55,766.75,865.16,25,open,,,,,
