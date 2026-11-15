@@ -1,5 +1,5 @@
 {
- "updated": "14 Nov 2026",
+ "updated": "15 Nov 2026",
  "source": "Nifty 500 list, filtered by price, liquidity and momentum",
  "stocks": {
   "SAILIFE": "Healthcare",
@@ -44,8 +44,8 @@
   "CUPID": "Fast Moving Consumer Goods",
   "JSWSTEEL": "Metals & Mining",
   "GESHIP": "Services",
-  "DLF": "Realty",
   "SBIN": "Financial Services",
+  "DLF": "Realty",
   "ACE": "Capital Goods",
   "CANBK": "Financial Services",
   "ADANIPORTS": "Services",
