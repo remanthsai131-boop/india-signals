@@ -2,28 +2,63 @@
 """India Investor: ONE simple page built on long-tested ideas.
   Long-term: index SIP + 200-day trend check. Monthly: momentum leaders. Swing: trend pullbacks and 20-day breakouts with ATR stops.
 Research only, not financial advice. No orders are placed."""
-import datetime as dt, html, json, os, urllib.parse, urllib.request
-import numpy as np, pandas as pd
+import datetime as dt, html, json, os, time, urllib.parse, urllib.request
+import numpy as np, pandas as pd, requests
 import india_market_brief as m
 import pro_engine as pe
 import compare as cp
 
-SWING_N, LEAD_N, HOLD, COST = 15, 6, 20, 0.003
-SWING_J, FWD = "journal/swing_trades.csv", "journal/forward_picks.csv"
+SWING_N, LEAD_N, HOLD, COST = 40, 25, 20, 0.003
+SWING_J, FWD, FLOW = "journal/swing_trades.csv", "journal/forward_picks.csv", "journal/fii_dii.csv"
 STALE = ["docs/detail.html", "docs/pro.html", "docs/pro.json", "docs/live.json", "docs/signals.json", "docs/momentum.json"]
 
 # ---------- data ----------
+def norm(df):
+    df = df.dropna()
+    if getattr(df.index, "tz", None) is not None: df.index = df.index.tz_localize(None)
+    df.index = df.index.normalize(); return df
+
 def load():
-    nifty = m.hist("^NSEI"); nifty = pe.prepare(nifty, nifty.Close); pe.signals(nifty); data = {}
-    for t in m.UNIVERSE:
-        try:
-            df = m.hist(t + ".NS")
-            if len(df) < cp.LOOK + cp.N_DAYS + 5: continue
-            if not (m.MIN_PRICE <= float(df.Close.iloc[-1]) <= m.MAX_PRICE): continue
-            data[t] = pe.signals(pe.prepare(df, nifty.Close))
-        except Exception:
-            continue
+    """Downloads in batches of 100 (fast, gentle on Yahoo). Falls back to one-by-one if a batch fails."""
+    nifty = norm(m.hist("^NSEI")); nifty = pe.prepare(nifty, nifty.Close); pe.signals(nifty); data = {}; syms = list(m.UNIVERSE)
+    for i in range(0, len(syms), 100):
+        chunk = syms[i:i + 100]
+        try: d = m.yf.download([x + ".NS" for x in chunk], period="2y", group_by="ticker", auto_adjust=True, progress=False, threads=True)
+        except Exception: d = None
+        for t in chunk:
+            try:
+                df = norm(d[t + ".NS"].copy()) if d is not None else norm(m.hist(t + ".NS"))
+                if len(df) < cp.LOOK + cp.N_DAYS + 5: continue
+                if not (m.MIN_PRICE <= float(df.Close.iloc[-1]) <= m.MAX_PRICE): continue
+                data[t] = pe.signals(pe.prepare(df, nifty.Close))
+            except Exception:
+                continue
     return nifty, data
+
+def leaders(data, nifty, N):
+    """Long-term leaders: above the 200-day, near 52-week highs, strongest 12m/6m moves. Quality check uses Yahoo fundamentals when available."""
+    rows = []
+    for t, df in data.items():
+        x = df.iloc[-1]; c = df.Close
+        if len(c) < 252 or not (x.Close > x.e200 and x.e50 > x.e200) or x.turn < 2e7: continue
+        near = float(x.Close / x.h52)
+        if near < .80: continue
+        r12 = float(c.iloc[-1] / c.iloc[-252] - 1); r6 = float(c.iloc[-1] / c.iloc[-126] - 1); n6 = float(nifty.Close.iloc[-1] / nifty.Close.iloc[-126] - 1)
+        rows.append(dict(t=t, price=float(x.Close), r12=r12, rs6=r6 - n6, near=near, sector=m.SECTOR_OF.get(t, "")))
+    if not rows: return []
+    d = pd.DataFrame(rows); d["score"] = .4 * d.r12.rank(pct=True) + .3 * d.rs6.rank(pct=True) + .3 * d.near.rank(pct=True)
+    top = d.sort_values("score", ascending=False).head(N).to_dict("records"); t0 = time.time()
+    for p in top:
+        p["roe"] = p["gr"] = p["de"] = None
+        if time.time() - t0 > 150: continue
+        try:
+            i = m.yf.Ticker(p["t"] + ".NS").info
+            p["roe"], p["gr"], p["de"] = i.get("returnOnEquity"), i.get("revenueGrowth"), i.get("debtToEquity")
+        except Exception: pass
+    for p in top:
+        p["q"] = sum([p["roe"] is not None and p["roe"] >= .15, p["gr"] is not None and p["gr"] >= .10, p["de"] is not None and p["de"] <= 100])
+        p["qk"] = sum(v is not None for v in (p["roe"], p["gr"], p["de"]))
+    return top
 
 # ---------- swing ----------
 def swing(nifty, data):
@@ -52,7 +87,7 @@ def swing(nifty, data):
         if q < pe.MIN_Q: continue
         qty = int(min(m.CAPITAL * m.RISK_PCT / 100 / R, m.CAPITAL * pe.MAX_POS_PCT / 100 / xx.entry))
         cands.append(dict(t=t, kind=kind, in_zone=in_zone, status=status, q=q, price=float(x.Close), lo=float(xx.z_lo), hi=float(xx.z_hi), entry=float(xx.entry),
-                          stop=float(xx.stop), tp1=float(xx.entry + 1.5 * R), tp2=float(xx.entry + 2 * R), tp3=float(xx.entry + 3 * R), qty=qty, st=st, date=str(df.index[-1].date())))
+                          stop=float(xx.stop), sector=m.SECTOR_OF.get(t, ""), tp1=float(xx.entry + 1.5 * R), tp2=float(xx.entry + 2 * R), tp3=float(xx.entry + 3 * R), qty=qty, st=st, date=str(df.index[-1].date())))
     cands.sort(key=lambda p: (not p["in_zone"], -p["q"]))
     return cands[:SWING_N], sells, pe.stats(allres), trades, regime_ok, block
 
@@ -173,6 +208,71 @@ def nifty_study():
                 bh=(cagr(bh), mdd(bh), 100.0), rule=(cagr(st), mdd(st), 100 * float(pos.mean())), trades=int((sw > 0).sum() // 2),
                 p_up=100 * float((f20[ab] > 0).mean()), p_dn=100 * float((f20[be] > 0).mean()), curves=(bh.values[::5] / bh.values[0] * 100, st.values[::5] / st.values[0] * 100))
 
+def sector_table(data, closes):
+    """Average 3-month move and share above the 50-day average, by sector, across everything scanned."""
+    g = {}
+    for t, df in data.items():
+        if t not in closes.columns or len(closes) < 70: continue
+        g.setdefault(m.SECTOR_OF.get(t) or "Other", []).append((float(closes[t].iloc[-1] / closes[t].iloc[-64] - 1), bool(df.Close.iloc[-1] > df.e50.iloc[-1])))
+    rows = [(k, len(v), 100 * float(np.nanmean([x[0] for x in v])), 100 * float(np.mean([x[1] for x in v]))) for k, v in g.items() if len(v) >= 3]
+    return sorted(rows, key=lambda r: -r[2])
+
+def fii_dii():
+    """Latest FII/FPI and DII net buying (Rs crore) from NSE's public page. Market-wide, published after the close."""
+    h = {"User-Agent": "Mozilla/5.0", "Accept": "application/json", "Referer": "https://www.nseindia.com/"}
+    try:
+        s = requests.Session(); s.get("https://www.nseindia.com", headers=h, timeout=15)
+        r = s.get("https://www.nseindia.com/api/fiidiiTradeReact", headers=h, timeout=15).json(); out, date = {}, None
+        for d in r:
+            cat = str(d.get("category", "")).upper(); k = "fii" if ("FII" in cat or "FPI" in cat) else "dii" if "DII" in cat else None
+            if k: out[k] = float(str(d.get("netValue", "0")).replace(",", "")); date = d.get("date")
+        if "fii" in out and "dii" in out and date: return str(pd.to_datetime(date, format="%d-%b-%Y").date()), out["fii"], out["dii"]
+    except Exception: pass
+    return None
+
+def flow_update():
+    cols = ["date", "fii_net", "dii_net"]
+    try: f = pd.read_csv(FLOW)
+    except Exception: f = pd.DataFrame(columns=cols)
+    new = fii_dii()
+    if new and new[0] not in set(f.date.astype(str)): f.loc[len(f)] = list(new)
+    f = f.sort_values("date").tail(60); os.makedirs("journal", exist_ok=True); f.to_csv(FLOW, index=False)
+    return f
+
+def flow_mood(f):
+    if not len(f): return "Unknown", "Flow data is not available yet. It builds up day by day from the first successful fetch."
+    t = f.tail(5); a, b = float(t.fii_net.sum()), float(t.dii_net.sum())
+    if a > 0 and a + b > 0: return "Supportive", "Foreign and domestic institutions are both net buyers recently. Normal position size is fine."
+    if a < 0 and a + b < 0: return "Caution", "Both are net sellers recently. Use half size on new swing ideas and take fewer trades."
+    return "Mixed", "Foreign and domestic funds are pulling in different directions. Keep your normal rules and small size."
+
+def flow_bars(f, w=700):
+    r = f.tail(12)
+    if not len(r): return ""
+    vals = [float(v) for v in list(r.fii_net) + list(r.dii_net)]; lo, hi = min(0, min(vals)), max(0, max(vals)); span = (hi - lo) or 1
+    h, top, bot = 200, 22, 28; Y = lambda v: top + (h - top - bot) * (hi - v) / span; bw = w / len(r)
+    o = [f'<svg viewBox="0 0 {w} {h}" class="ch"><line x1="0" x2="{w}" y1="{Y(0):.1f}" y2="{Y(0):.1f}" class="grid"/>']
+    for i, (d, a, b) in enumerate(zip(r.date, r.fii_net, r.dii_net)):
+        for k, (v, cls) in enumerate(((float(a), "bp"), (float(b), "bn"))):
+            x = i * bw + bw * (.12 + .4 * k); y0, y1 = Y(0), Y(v)
+            o.append(f'<rect x="{x:.1f}" y="{min(y0, y1):.1f}" width="{bw*.36:.1f}" height="{max(abs(y1 - y0), 1):.1f}" class="{cls}"/>')
+        o.append(f'<text x="{i*bw + bw/2:.1f}" y="{h-8}" text-anchor="middle" class="lab">{str(d)[5:]}</text>')
+    return "".join(o) + "</svg>"
+
+def big_deals(universe):
+    """Bulk and block deals NSE reports today, limited to the stocks scanned. These are large trades by any client, not all FII/DII trades."""
+    h = {"User-Agent": "Mozilla/5.0", "Accept": "application/json", "Referer": "https://www.nseindia.com/"}; out = []
+    try:
+        s = requests.Session(); s.get("https://www.nseindia.com", headers=h, timeout=15)
+        d = s.get("https://www.nseindia.com/api/snapshot-capital-market-largedeal", headers=h, timeout=20).json()
+        for key, label in (("BULK_DEALS_DATA", "Bulk"), ("BLOCK_DEALS_DATA", "Block")):
+            for r in d.get(key) or []:
+                sym = str(r.get("symbol", "")).strip()
+                if sym in universe:
+                    out.append((label, sym, str(r.get("clientName") or r.get("name") or "")[:28], str(r.get("buySell") or ""), r.get("qty") or r.get("quantity") or "", r.get("watp") or r.get("tradePrice") or ""))
+    except Exception: pass
+    return out
+
 def telegram(text):
     tok, chat = os.environ.get("TELEGRAM_TOKEN", "").strip(), os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     if not tok or not chat: return
@@ -183,7 +283,11 @@ def telegram(text):
 
 def main():
     nifty, data = load(); idx = nifty.index; nx = nifty.iloc[-1]; N = max(len(data), 1)
+    flows = flow_update(); fm, fmsg = flow_mood(flows); deals = big_deals(set(data)); dmark = {}
+    for lab, sym, cl, bs, q, pr in deals: dmark.setdefault(sym, set()).add("Buy" if bs.upper().startswith("B") else "Sell")
     top, sells, ps, trades, regime_ok, block = swing(nifty, data)
+    if fm == "Caution":
+        for p in top: p["qty"] = int(p["qty"] * 0.5)
     closes = pd.DataFrame({t: d.Close for t, d in data.items()}).reindex(idx).ffill(); nc, n200 = nifty.Close, nifty.e200
     on = bool(nc.iloc[-1] > n200.iloc[-1]); L = len(closes)
     mom_eq = cp.momentum(closes, nc, n200); sw_eq, taken = cp.swing_curve(trades, idx); ni_eq = 100 * nc.values[-cp.N_DAYS:] / nc.values[-cp.N_DAYS]
@@ -191,14 +295,15 @@ def main():
     lastmom = (closes.iloc[-1 - cp.SKIP] / closes.iloc[-1 - cp.LOOK] - 1).dropna().sort_values(ascending=False).head(cp.TOP)
     mom = dict(date=str(idx[-1].date()), on=on, nifty=float(nc.iloc[-1]), picks=[dict(sym=t, price=float(closes[t].iloc[-1]), mom=float(v)) for t, v in lastmom.items()])
     tstudy = target_study(data); ns = nifty_study()
-    fw = forward(mom, closes); j = swing_journal(top, data); lead = pe.leaders(data, nifty, dict(m.SECTOR_OF))[:LEAD_N]
+    fw = forward(mom, closes); j = swing_journal(top, data); lead = leaders(data, nifty, LEAD_N); secs = sector_table(data, closes)
     above200 = sum(bool(d.Close.iloc[-1] > d.e200.iloc[-1]) for d in data.values()); off52 = 1 - float(nx.Close / nx.h52)
     trend = pe.TREND[int(nx.trend)]; rsi = float(nx.rsi)
     heat = "very hot, so dips are common" if rsi > 75 else "very weak" if rsi < 30 else "normal"
     lump = ("Nifty is above its 200-day average. Normal conditions for investing." if on else "Nifty is below its 200-day average. Keep your SIP running, but add any lump sum in small parts.")
     sw_say = ("Swing buying is paused: Nifty is in a downtrend." if block else "Be selective: the market is not in a clear uptrend, so use small size." if not regime_ok else "Conditions allow swing ideas, with small size.")
+    if fm == "Caution" and not block: sw_say += " Institutional flows are negative, so use half size."
     tiles = (f'<div class="t"><div class="k">Nifty 50</div><div class="v">{nx.Close:,.0f}</div></div><div class="t"><div class="k">Trend</div><div class="v">{trend}</div></div>'
-             f'<div class="t"><div class="k">Below 52-week high</div><div class="v">{off52*100:.1f}%</div></div><div class="t"><div class="k">Stocks above 200-day</div><div class="v">{100*above200/N:.0f}%</div></div>')
+             f'<div class="t"><div class="k">Below 52-week high</div><div class="v">{off52*100:.1f}%</div></div><div class="t"><div class="k">Stocks above 200-day</div><div class="v">{100*above200/N:.0f}%</div></div><div class="t"><div class="k">Stocks scanned</div><div class="v">{len(data)}</div></div>')
     sip = (f'<div class="say"><b>Keep a monthly index-fund SIP running.</b> It is the simplest idea here and has the longest track record. {lump} Market heat (RSI {rsi:.0f}) is {heat}.</div>'
            f'<p class="m">Illustration only, not a forecast: Rs 10,000 a month for 15 years at 10% a year would grow to about Rs {sip_fv()/1e5:,.0f} lakh. Real returns vary and can be negative for years.</p>')
     chart = m.line_chart([("Just hold Nifty", ni_eq, "c1"), ("Momentum picks", mom_eq, "c2"), ("Swing rules", sw_eq, "c3")], fmt="{:.0f}")
@@ -218,10 +323,10 @@ def main():
                   f'<div class="big">Buy between <b>{p["lo"]:,.1f}</b> and <b>{p["hi"]:,.1f}</b></div><div class="big">Targets: <b>{p["tp1"]:,.1f}</b> / <b>{p["tp2"]:,.1f}</b> / <b>{p["tp3"]:,.1f}</b> <span class="m">(1.5R / 2R / 3R)</span></div>'
                   f'<div class="big">Get out if it falls to <b>{p["stop"]:,.1f}</b></div><div class="m">Shares: {p["qty"]} (a loss at the stop is about Rs {p["qty"]*(p["hi"]-p["stop"]):,.0f})</div></div>')
     cards = cards or '<div class="card">No swing ideas pass the filters today. Doing nothing is a good decision.</div>'
-    trows = "".join(f'<tr><td>{html.escape(p["t"])}</td><td>{p["kind"]}</td><td>{p["q"]}</td><td>{p["lo"]:,.1f} - {p["hi"]:,.1f}</td><td>{p["stop"]:,.1f}</td><td>{p["tp1"]:,.1f} - {p["tp3"]:,.1f}</td><td>{p["qty"]}</td>'
-                    f'<td>{"in zone" if p["in_zone"] else "approaching"}</td></tr>' for p in top)
+    trows = "".join(f'<tr><td>{html.escape(p["t"])}</td><td>{html.escape(p["sector"][:16])}</td><td>{p["kind"]}</td><td>{p["q"]}</td><td>{p["lo"]:,.1f} - {p["hi"]:,.1f}</td><td>{p["stop"]:,.1f}</td><td>{p["tp1"]:,.1f} - {p["tp3"]:,.1f}</td><td>{p["qty"]}</td>'
+                    f'<td>{"in zone" if p["in_zone"] else "approaching"}</td><td>{" ".join(sorted(dmark.get(p["t"], [])))}</td></tr>' for p in top)
     sellrows = "".join(f'<tr><td>{html.escape(t)}</td><td>{pe.TREND[int(x.trend)]}</td><td>{x.Close:,.1f}</td></tr>' for t, x in sells) or "<tr><td colspan=3>None today.</td></tr>"
-    lrows = "".join(f'<tr><td>{html.escape(p["t"])}</td><td>{p["price"]:,.1f}</td><td class="up">{p["r12"]*100:+.0f}%</td><td>{(1-p["near"])*100:.0f}%</td><td>{pe.pctf(p["roe"])} / {pe.pctf(p["gr"])} / {pe.fmt(p["de"], 0)}</td></tr>' for p in lead) or "<tr><td colspan=5>None today.</td></tr>"
+    lrows = "".join(f'<tr><td>{html.escape(p["t"])}</td><td>{html.escape(p["sector"][:16])}</td><td>{p["price"]:,.1f}</td><td class="up">{p["r12"]*100:+.0f}%</td><td>{(1-p["near"])*100:.0f}%</td><td>{pe.pctf(p["roe"])} / {pe.pctf(p["gr"])} / {pe.fmt(p["de"], 0)}</td><td>{f"{p[chr(113)]} of 3" if p["qk"] else "n/a"}</td></tr>' for p in lead) or "<tr><td colspan=7>None today.</td></tr>"
     done = j[j.status.isin(["target", "stop", "expired"])]; n = len(done)
     if n:
         pnl, rr = done.pnl.astype(float), done.r.astype(float)
@@ -243,12 +348,28 @@ def main():
                 f'The rule changed position about {ns["trades"]} times. Its main value is a smaller worst drop, not higher returns, and it can lose small amounts in sideways markets. '
                 f'Price index only: dividends, taxes, fund costs and what cash earns are not included.</p>')
     else: nsec = '<div class="card">Nifty history is not available right now.</div>'
+    if len(flows):
+        l = flows.iloc[-1]; t5 = flows.tail(5)
+        ftiles = (f'<div class="tiles"><div class="t"><div class="k">FII net, latest ({l.date})</div><div class="v {"up" if l.fii_net >= 0 else "dn"}">{l.fii_net:+,.0f}</div></div>'
+                  f'<div class="t"><div class="k">DII net, latest</div><div class="v {"up" if l.dii_net >= 0 else "dn"}">{l.dii_net:+,.0f}</div></div>'
+                  f'<div class="t"><div class="k">FII net, last {len(t5)} days</div><div class="v">{t5.fii_net.sum():+,.0f}</div></div>'
+                  f'<div class="t"><div class="k">DII net, last {len(t5)} days</div><div class="v">{t5.dii_net.sum():+,.0f}</div></div></div>')
+        fsec = (f'{ftiles}<div class="say"><b>Flow mood: {fm}.</b> {fmsg}</div>{flow_bars(flows)}<p class="m">Rs crore, cash market, after the close. Blue = FII, grey = DII. '
+                'Stock-by-stock FII/DII buying is only published quarterly (shareholding patterns), so this is a market-wide mood, not a stock signal. Never use it alone.</p>')
+    else: fsec = f'<div class="say">{fmsg}</div>'
+    drow = "".join(f'<tr><td>{a}</td><td>{html.escape(b)}</td><td>{html.escape(c)}</td><td>{d}</td><td>{e}</td><td>{f}</td></tr>' for a, b, c, d, e, f in deals[:15]) or "<tr><td colspan=6>None in your stocks today, or the data is not available.</td></tr>"
+    fsec += (f'<h3>Large deals today in your stocks (bulk and block)</h3><div class="tw"><table><tr><th>Type<th>Stock<th>Client<th>Side<th>Quantity<th>Price</tr>{drow}</table></div>'
+             '<p class="m">These show who traded in size, but the client can be a fund, a foreign investor, a domestic institution or a trader. One big buy is not proof a stock will rise. The Big deal column in the swing table marks stocks that appear here.</p>')
+    sech = "".join(f'<tr><td>{html.escape(k)}</td><td>{n}</td><td class="{"up" if r >= 0 else "dn"}">{r:+.1f}%</td><td>{a:.0f}%</td></tr>' for k, n, r, a in (secs[:8] + [x for x in secs[-4:] if x not in secs[:8]]))
     now = dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=5, minutes=30); learn = "".join(f"<details><summary>{a}</summary><p>{b}</p></details>" for a, b in LEARN)
     page = f"""<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>My Investing Dashboard</title>
 <link rel=manifest href=manifest.json><meta name=theme-color content="#0d1117"><link rel=apple-touch-icon href=icon-180.png><style>{CSS}</style></head><body>
 <h1>My Investing Dashboard</h1><div class="m">Updated {now:%d %b %Y, %H:%M} IST. Data after market close.</div>
 <div class="warn">Research and practice only, not financial advice. No method can promise profit. Use paper money first, and only invest money you can afford to lose.</div>
 <h2>How is the market?</h2><div class="tiles">{tiles}</div>
+<h2>Institutional flows (FII / DII)</h2>{fsec}
+<h2>Whole-market scan</h2><p class="m">Scanned {len(data)} stocks from the broad NSE market list (Nifty Total Market, about 750 stocks, or Nifty 500 if that list is unavailable; priced Rs {m.MIN_PRICE} to {m.MAX_PRICE}, with enough trading volume). That covers most of the market's value. Sectors with the strongest and weakest 3-month moves:</p>
+<div class="tw"><table><tr><th>Sector<th>Stocks<th>3-month avg<th>Above 50-day</tr>{sech}</table></div>
 <h2>1. Long-term: index SIP (years)</h2>{sip}
 <h2>2. Nifty: the 200-day trend rule (months to years)</h2><p class="m">A classic, widely studied rule: hold the index while it is above its 200-day average, step aside when it is below.</p>{nsec}
 <h2>3. Monthly: momentum leaders (months)</h2><p class="m">A long-studied method: hold the strongest stocks, rebalance monthly, go to cash when the market trend is down.</p>
@@ -261,11 +382,11 @@ def main():
 <div class="say">{sw_say}</div><div class="warn">{verdict}</div>{cards}
 <h3>How often each target was reached (last year, same entries)</h3><div class="tw"><table><tr><th>Target<th>Trades<th>Reached<th>Stop first<th>Neither<th>Avg result</tr>{"".join(f'<tr><td>{a}</td><td>{b}</td><td>{c:.0f}%</td><td>{d:.0f}%</td><td>{e:.0f}%</td><td>{f:+.2f}R</td></tr>' for a, b, c, d, e, f in tstudy)}</table></div>
 <p class="m">A close target is hit more often but pays less. A high hit rate alone proves nothing, so always check the average result. After costs it needs to be above zero.</p>
-<div class="tw"><table><tr><th>Stock<th>Idea<th>Score<th>Buy range<th>Stop<th>Sell range<th>Shares<th>Status</tr>{trows or "<tr><td colspan=8>No ideas today.</td></tr>"}</table></div>
+<div class="tw"><table><tr><th>Stock<th>Sector<th>Idea<th>Score<th>Buy range<th>Stop<th>Sell range<th>Shares<th>Status<th>Big deal</tr>{trows or "<tr><td colspan=10>No ideas today.</td></tr>"}</table></div>
 <h3>Avoid or exit if you hold</h3><div class="tw"><table><tr><th>Stock<th>Trend<th>Price</tr>{sellrows}</table></div>
 <h3>My practice swing journal</h3>{jt}
-<h2>5. Long-term leaders to research</h2><p class="m">Strong long-term trends near 52-week highs. Nobody can pick winners in advance. Treat this as a shortlist to study, not a promise. Columns: ROE / revenue growth / debt-to-equity, when available.</p>
-<div class="tw"><table><tr><th>Stock<th>Price<th>12m<th>Below high<th>Quality</tr>{lrows}</table></div>
+<h2>5. Long-term leaders to research</h2><p class="m">Strong long-term trends near 52-week highs. Nobody can pick winners in advance. Treat this as a shortlist to study, not a promise. Quality check counts: ROE of 15% or more, revenue growth of 10% or more, debt-to-equity of 100 or less. It shows n/a when Yahoo has no data. Read the company's own reports before investing.</p>
+<div class="tw"><table><tr><th>Stock<th>Sector<th>Price<th>12m<th>Below high<th>ROE / growth / debt<th>Quality check</tr>{lrows}</table></div>
 <h2>Learn in 2 minutes</h2>{learn}
 <h2>Simple routine</h2><ol><li>Keep the monthly SIP running.</li><li>Once a month, review the momentum list.</li><li>For swing ideas, choose at most 3, set the stop first.</li><li>On Sunday, check the journal and the live test.</li></ol></body></html>"""
     os.makedirs("docs", exist_ok=True); open("docs/index.html", "w", encoding="utf-8").write(page)
@@ -274,9 +395,8 @@ def main():
         except OSError: pass
     ideas = [p for p in top if p["in_zone"]][:5]
     telegram(f"Plan {mom['date']}: Nifty {nx.Close:,.0f} ({trend}). {sw_say}\n" + ("\n".join(f"{p['t']}: buy {p['lo']:.1f}-{p['hi']:.1f} stop {p['stop']:.1f} sell {p['tp1']:.1f}-{p['tp3']:.1f} qty {p['qty']}" for p in ideas) or "No swing ideas in the buy range today.")
-             + f"\nMonthly momentum: {'invest' if on else 'stay in cash'}.\nPractice only, not advice.")
+             + f"\nFII/DII flow mood: {fm}.\nMonthly momentum: {'invest' if on else 'stay in cash'}.\nPractice only, not advice.")
     print("Done:", len(top), "swing ideas,", len(lead), "leaders,", len(data), "stocks,", ps["n"], "1y trades")
 
 if __name__ == "__main__":
     main()
-
