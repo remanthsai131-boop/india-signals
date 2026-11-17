@@ -91,13 +91,44 @@ def swing(nifty, data):
     cands.sort(key=lambda p: (not p["in_zone"], -p["q"]))
     return cands[:SWING_N], sells, pe.stats(allres), trades, regime_ok, block
 
+def exit_by(date_str):
+    """Last day to hold: the 20th trading day, counting the first trading day after the signal as day 1 (weekends skipped; check NSE holidays)."""
+    d0 = np.busday_offset(pd.to_datetime(date_str).date(), 1, roll="forward")
+    return str(np.busday_offset(d0, HOLD - 1))
+
+def nifty_plan(nifty):
+    """Swing plan for Nifty 50 using the Nifty ETF (NIFTYBEES) with the same rules as the stocks."""
+    try:
+        etf = m.hist("NIFTYBEES.NS")
+        if len(etf) < 260: return None
+        etf = pe.signals(pe.prepare(etf, nifty.Close))
+    except Exception: return None
+    x = etf.iloc[-1]; atr = float(x.atr); ratio = float(nifty.Close.iloc[-1] / x.Close); pb_hi = float(x.e20 + .25 * atr)
+    if bool(x.brk) or bool(x.pull):
+        mode, kind = "IN ZONE", "Breakout" if bool(x.brk) else "Pullback"; lo, hi, entry, stop = float(x.z_lo), float(x.z_hi), float(x.entry), float(x.stop)
+    elif int(x.trend) >= 1:
+        mode, kind = "WAIT", "Pullback"; lo, hi, entry = float(x.e50), pb_hi, pb_hi
+        s0 = min(float(x.sl10), float(x.e50)) - .25 * atr; stop = entry - atr if entry - s0 < atr else s0
+    else:
+        return dict(mode="NO TRADE", in_zone=False, trend=pe.TREND[int(x.trend)], hh20=float(x.hh20), ratio=ratio, date=str(etf.index[-1].date()))
+    R = entry - stop
+    if R <= 0: return None
+    qty = int(min(m.CAPITAL * m.RISK_PCT / 100 / R, m.CAPITAL * pe.MAX_POS_PCT / 100 / entry))
+    return dict(mode=mode, in_zone=mode == "IN ZONE", t="NIFTYBEES", kind=kind, tier="ETF", q=0, lo=lo, hi=hi, entry=entry, stop=stop, tp1=entry + 1.5 * R, tp2=entry + 2 * R,
+                tp3=entry + 3 * R, qty=qty, ratio=ratio, trend=pe.TREND[int(x.trend)], hh20=float(x.hh20), date=str(etf.index[-1].date()), R=R)
+
 def swing_journal(top, data):
-    cols = ["signal_date", "symbol", "kind", "entry", "stop", "target", "qty", "status", "fill", "exit", "exit_date", "r", "pnl"]
+    cols = ["signal_date", "symbol", "kind", "entry", "stop", "target", "qty", "status", "fill", "exit", "exit_date", "r", "pnl", "lo", "hi", "tp1", "tp3", "expiry", "tier"]
     try: j = pd.read_csv(SWING_J)
     except Exception: j = pd.DataFrame(columns=cols)
+    for c in cols:
+        if c not in j.columns: j[c] = None
+    j = j[cols]
     for p in top:
-        if p["in_zone"] and p["q"] >= 60 and not ((j.signal_date == p["date"]) & (j.symbol == p["t"])).any():
-            j.loc[len(j)] = [p["date"], p["t"], p["kind"], round(p["entry"], 2), round(p["stop"], 2), round(p["tp2"], 2), p["qty"], "open", None, None, None, None, None]
+        if p["in_zone"] and not ((j.signal_date == p["date"]) & (j.symbol == p["t"])).any():
+            tier = p.get("tier") or ("A" if p["q"] >= 75 else "B" if p["q"] >= 60 else "C")
+            j.loc[len(j)] = [p["date"], p["t"], p["kind"], round(p["entry"], 2), round(p["stop"], 2), round(p["tp2"], 2), p["qty"], "open", None, None, None, None, None,
+                             round(p["lo"], 2), round(p["hi"], 2), round(p["tp1"], 2), round(p["tp3"], 2), exit_by(p["date"]), tier]
     for i, r in j[j.status == "open"].iterrows():
         try:
             df = data.get(r.symbol)
@@ -286,8 +317,11 @@ def main():
     flows = flow_update(); fm, fmsg = flow_mood(flows); deals = big_deals(set(data)); dmark = {}
     for lab, sym, cl, bs, q, pr in deals: dmark.setdefault(sym, set()).add("Buy" if bs.upper().startswith("B") else "Sell")
     top, sells, ps, trades, regime_ok, block = swing(nifty, data)
+    npl = nifty_plan(nifty)
+    for p in top: p["exit_by"] = exit_by(p["date"]) if p["in_zone"] else "20 trading days after you buy"
     if fm == "Caution":
         for p in top: p["qty"] = int(p["qty"] * 0.5)
+        if npl and "qty" in npl: npl["qty"] = int(npl["qty"] * 0.5)
     closes = pd.DataFrame({t: d.Close for t, d in data.items()}).reindex(idx).ffill(); nc, n200 = nifty.Close, nifty.e200
     on = bool(nc.iloc[-1] > n200.iloc[-1]); L = len(closes)
     mom_eq = cp.momentum(closes, nc, n200); sw_eq, taken = cp.swing_curve(trades, idx); ni_eq = 100 * nc.values[-cp.N_DAYS:] / nc.values[-cp.N_DAYS]
@@ -295,7 +329,7 @@ def main():
     lastmom = (closes.iloc[-1 - cp.SKIP] / closes.iloc[-1 - cp.LOOK] - 1).dropna().sort_values(ascending=False).head(cp.TOP)
     mom = dict(date=str(idx[-1].date()), on=on, nifty=float(nc.iloc[-1]), picks=[dict(sym=t, price=float(closes[t].iloc[-1]), mom=float(v)) for t, v in lastmom.items()])
     tstudy = target_study(data); ns = nifty_study()
-    fw = forward(mom, closes); j = swing_journal(top, data); lead = leaders(data, nifty, LEAD_N); secs = sector_table(data, closes)
+    fw = forward(mom, closes); j = swing_journal(top + ([npl] if npl and npl.get("in_zone") else []), data); lead = leaders(data, nifty, LEAD_N); secs = sector_table(data, closes)
     above200 = sum(bool(d.Close.iloc[-1] > d.e200.iloc[-1]) for d in data.values()); off52 = 1 - float(nx.Close / nx.h52)
     trend = pe.TREND[int(nx.trend)]; rsi = float(nx.rsi)
     heat = "very hot, so dips are common" if rsi > 75 else "very weak" if rsi < 30 else "normal"
@@ -321,9 +355,9 @@ def main():
         why = "a dip in an uptrend" if p["kind"] == "Pullback" else "a break above a recent high on strong volume"
         cards += (f'<div class="card"><div class="row"><b>{html.escape(p["t"])}</b><span class="chip {cls}">{html.escape(chip)}</span></div><div class="m">Idea: {why}</div>'
                   f'<div class="big">Buy between <b>{p["lo"]:,.1f}</b> and <b>{p["hi"]:,.1f}</b></div><div class="big">Targets: <b>{p["tp1"]:,.1f}</b> / <b>{p["tp2"]:,.1f}</b> / <b>{p["tp3"]:,.1f}</b> <span class="m">(1.5R / 2R / 3R)</span></div>'
-                  f'<div class="big">Get out if it falls to <b>{p["stop"]:,.1f}</b></div><div class="m">Shares: {p["qty"]} (a loss at the stop is about Rs {p["qty"]*(p["hi"]-p["stop"]):,.0f})</div></div>')
+                  f'<div class="big">Get out if it falls to <b>{p["stop"]:,.1f}</b></div><div class="m">Shares: {p["qty"]} (a loss at the stop is about Rs {p["qty"]*(p["hi"]-p["stop"]):,.0f})</div><div class="m">Exit by: {p["exit_by"]} if neither stop nor target is hit</div></div>')
     cards = cards or '<div class="card">No swing ideas pass the filters today. Doing nothing is a good decision.</div>'
-    trows = "".join(f'<tr><td>{html.escape(p["t"])}</td><td>{html.escape(p["sector"][:16])}</td><td>{p["kind"]}</td><td>{p["q"]}</td><td>{p["lo"]:,.1f} - {p["hi"]:,.1f}</td><td>{p["stop"]:,.1f}</td><td>{p["tp1"]:,.1f} - {p["tp3"]:,.1f}</td><td>{p["qty"]}</td>'
+    trows = "".join(f'<tr><td>{html.escape(p["t"])}</td><td>{html.escape(p["sector"][:16])}</td><td>{p["kind"]}</td><td>{p["q"]}</td><td>{p["lo"]:,.1f} - {p["hi"]:,.1f}</td><td>{p["stop"]:,.1f}</td><td>{p["tp1"]:,.1f} - {p["tp3"]:,.1f}</td><td>{p["exit_by"]}</td><td>{p["qty"]}</td>'
                     f'<td>{"in zone" if p["in_zone"] else "approaching"}</td><td>{" ".join(sorted(dmark.get(p["t"], [])))}</td></tr>' for p in top)
     sellrows = "".join(f'<tr><td>{html.escape(t)}</td><td>{pe.TREND[int(x.trend)]}</td><td>{x.Close:,.1f}</td></tr>' for t, x in sells) or "<tr><td colspan=3>None today.</td></tr>"
     lrows = "".join(f'<tr><td>{html.escape(p["t"])}</td><td>{html.escape(p["sector"][:16])}</td><td>{p["price"]:,.1f}</td><td class="up">{p["r12"]*100:+.0f}%</td><td>{(1-p["near"])*100:.0f}%</td><td>{pe.pctf(p["roe"])} / {pe.pctf(p["gr"])} / {pe.fmt(p["de"], 0)}</td><td>{f"{p[chr(113)]} of 3" if p["qk"] else "n/a"}</td></tr>' for p in lead) or "<tr><td colspan=7>None today.</td></tr>"
@@ -361,6 +395,30 @@ def main():
     fsec += (f'<h3>Large deals today in your stocks (bulk and block)</h3><div class="tw"><table><tr><th>Type<th>Stock<th>Client<th>Side<th>Quantity<th>Price</tr>{drow}</table></div>'
              '<p class="m">These show who traded in size, but the client can be a fund, a foreign investor, a domestic institution or a trader. One big buy is not proof a stock will rise. The Big deal column in the swing table marks stocks that appear here.</p>')
     sech = "".join(f'<tr><td>{html.escape(k)}</td><td>{n}</td><td class="{"up" if r >= 0 else "dn"}">{r:+.1f}%</td><td>{a:.0f}%</td></tr>' for k, n, r, a in (secs[:8] + [x for x in secs[-4:] if x not in secs[:8]]))
+    if npl:
+        ratio = npl["ratio"]; pts = lambda v: f"{v * ratio:,.0f}"
+        chip, cls = {"IN ZONE": ("In buy range now", "grn"), "WAIT": ("Wait for a dip", "amb"), "NO TRADE": ("No swing buy now", "amb")}[npl["mode"]]
+        if npl["mode"] == "NO TRADE":
+            body = f'<div class="m">The trend is {npl["trend"]}. Watch for a close above {npl["hh20"]:,.2f} (Nifty about {pts(npl["hh20"])}) before considering a buy.</div>'
+        else:
+            body = (f'<div class="big">Buy between <b>{npl["lo"]:,.2f}</b> and <b>{npl["hi"]:,.2f}</b> <span class="m">(Nifty about {pts(npl["lo"])} to {pts(npl["hi"])})</span></div>'
+                    f'<div class="big">Targets: <b>{npl["tp1"]:,.2f}</b> / <b>{npl["tp2"]:,.2f}</b> / <b>{npl["tp3"]:,.2f}</b> <span class="m">(Nifty about {pts(npl["tp1"])} / {pts(npl["tp2"])} / {pts(npl["tp3"])})</span></div>'
+                    f'<div class="big">Get out if it falls to <b>{npl["stop"]:,.2f}</b> <span class="m">(Nifty about {pts(npl["stop"])})</span></div>'
+                    f'<div class="big">Exit by: <b>{exit_by(npl["date"]) if npl["in_zone"] else "20 trading days after you buy"}</b></div>'
+                    f'<div class="m">Units: {npl["qty"]} (a loss at the stop is about Rs {npl["qty"] * (npl["hi"] - npl["stop"]):,.0f})</div>')
+        nifty_card = (f'<h3>Nifty 50 swing plan</h3><div class="card"><div class="row"><b>Nifty 50 via a Nifty ETF (NIFTYBEES)</b><span class="chip {cls}">{chip}</span></div>{body}'
+                      '<div class="m">Prices are for the ETF. "Nifty about" converts them to index points. The exit-by date counts 20 trading days (weekends skipped, so check NSE holidays). '
+                      'Use the ETF or an index fund, not futures or options. If a futures or options expiry date is what you meant, I leave those out because most individuals lose money there.</div></div>')
+    else: nifty_card = '<div class="card">The Nifty ETF plan is not available right now.</div>'
+    ff = lambda v, d=1: "-" if pd.isna(v) else f"{float(v):,.{d}f}"
+    hrows = ""
+    for w in j.tail(40).iloc[::-1].itertuples():
+        res = "-" if pd.isna(w.r) else f'<span class="{"up" if float(w.r) >= 0 else "dn"}">{float(w.r):+.2f}R</span>'
+        stt = {"open": "open", "target": "target hit", "stop": "stopped out", "expired": "time exit", "skipped": "skipped (gap)"}.get(str(w.status), str(w.status))
+        hrows += (f'<tr><td>{w.signal_date}</td><td>{html.escape(str(w.symbol))}</td><td>{w.tier if isinstance(w.tier, str) else "-"}</td><td>{ff(w.lo)} - {ff(w.hi)}</td><td>{ff(w.stop)}</td>'
+                  f'<td>{ff(w.tp1)} / {ff(w.target)} / {ff(w.tp3)}</td><td>{w.expiry if isinstance(w.expiry, str) else "-"}</td><td>{stt}</td><td>{res}</td></tr>')
+    hist_html = ('<h3>Previous swing ideas and how they ended</h3><p class="m">Every idea that was in its buy range is logged here, newest first. Results settle automatically: buy at the next open, then stop, target TP2 (2R), or a time exit. Older rows may show "-" where details were not saved yet.</p>'
+                 f'<div class="tw"><table><tr><th>Date<th>Stock<th>Tier<th>Buy range<th>Stop<th>TP1 / TP2 / TP3<th>Exit by<th>Status<th>Result</tr>{hrows or "<tr><td colspan=9>History starts after the next run.</td></tr>"}</table></div>')
     now = dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=5, minutes=30); learn = "".join(f"<details><summary>{a}</summary><p>{b}</p></details>" for a, b in LEARN)
     page = f"""<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>My Investing Dashboard</title>
 <link rel=manifest href=manifest.json><meta name=theme-color content="#0d1117"><link rel=apple-touch-icon href=icon-180.png><style>{CSS}</style></head><body>
@@ -379,12 +437,12 @@ def main():
 <h3>Live test: monthly picks vs Nifty</h3>{bars(fw)}<div class="tw"><table><tr><th>Month<th>Stocks<th>Picks<th>Nifty</tr>{frows}</table></div>
 <p class="m">{f"So far the picks beat Nifty in {beat} of {len(fdone)} months. Judge after at least 6 months." if fdone else "The first month is recorded. Results appear as days pass."}</p>
 <h2>4. Swing trades (days to weeks)</h2><p class="m">Classic trend rules: buy dips to the 20/50-day average in an uptrend, or a break above the 20-day high. Stop below the recent low, sell near 2x to 3x your risk.</p>
-<div class="say">{sw_say}</div><div class="warn">{verdict}</div>{cards}
+<div class="say">{sw_say}</div><div class="warn">{verdict}</div>{nifty_card}{cards}
 <h3>How often each target was reached (last year, same entries)</h3><div class="tw"><table><tr><th>Target<th>Trades<th>Reached<th>Stop first<th>Neither<th>Avg result</tr>{"".join(f'<tr><td>{a}</td><td>{b}</td><td>{c:.0f}%</td><td>{d:.0f}%</td><td>{e:.0f}%</td><td>{f:+.2f}R</td></tr>' for a, b, c, d, e, f in tstudy)}</table></div>
 <p class="m">A close target is hit more often but pays less. A high hit rate alone proves nothing, so always check the average result. After costs it needs to be above zero.</p>
-<div class="tw"><table><tr><th>Stock<th>Sector<th>Idea<th>Score<th>Buy range<th>Stop<th>Sell range<th>Shares<th>Status<th>Big deal</tr>{trows or "<tr><td colspan=10>No ideas today.</td></tr>"}</table></div>
+<div class="tw"><table><tr><th>Stock<th>Sector<th>Idea<th>Score<th>Buy range<th>Stop<th>Sell range<th>Exit by<th>Shares<th>Status<th>Big deal</tr>{trows or "<tr><td colspan=11>No ideas today.</td></tr>"}</table></div>
 <h3>Avoid or exit if you hold</h3><div class="tw"><table><tr><th>Stock<th>Trend<th>Price</tr>{sellrows}</table></div>
-<h3>My practice swing journal</h3>{jt}
+<h3>My practice swing journal</h3>{jt}{hist_html}
 <h2>5. Long-term leaders to research</h2><p class="m">Strong long-term trends near 52-week highs. Nobody can pick winners in advance. Treat this as a shortlist to study, not a promise. Quality check counts: ROE of 15% or more, revenue growth of 10% or more, debt-to-equity of 100 or less. It shows n/a when Yahoo has no data. Read the company's own reports before investing.</p>
 <div class="tw"><table><tr><th>Stock<th>Sector<th>Price<th>12m<th>Below high<th>ROE / growth / debt<th>Quality check</tr>{lrows}</table></div>
 <h2>Learn in 2 minutes</h2>{learn}
